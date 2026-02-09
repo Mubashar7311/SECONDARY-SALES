@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#007bff">
+
+  <base target="_top">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body{font-family:Arial,sans-serif; font-size:18px; padding:10px; background:#f8f9fa;}
+    select,input,button{font-size:18px; padding:10px; margin:5px 0; width:100%; border-radius:6px; border:1px solid #ccc;}
+    button{background:#007bff; color:white; border:none;}
+    button:hover{background:#0056b3; cursor:pointer;}
+    table{border-collapse:collapse;width:100%; display:block; overflow-x:auto; margin-top:10px; background:white; border-radius:6px;}
+    th,td{border:1px solid #ddd; padding:8px; text-align:center; min-width:100px;}
+    th{background:#343a40; color:white;}
+    tr:nth-child(even){background:#f2f2f2;}
+    th.sticky, td.sticky{position:sticky; left:0; background:#343a40; color:white; z-index:2;}
+    th.sticky2, td.sticky2{position:sticky; left:120px; background:#343a40; color:white; z-index:2;}
+    #msg{margin-top:10px; font-weight:bold; font-size:18px;}
+    .ok{color:green;}
+    .err{color:red;}
+  </style>
+</head>
+<body>
+
+<h3>Inventory / Sales Entry</h3>
+
+<select id="mode">
+  <option value="">Select Type</option>
+  <option value="SALES">SALES</option>
+  <option value="CLOSING">CLOSING</option>
+</select>
+
+<select id="section">
+  <option value="">Select Section</option>
+</select>
+
+<select id="rep">
+  <option value="">Select Rep</option>
+</select>
+
+<button onclick="loadSKU()">LOAD TABLE</button>
+
+<table id="tbl">
+<thead>
+<tr>
+  <th class="sticky">SKU</th>
+  <th class="sticky2">Opening</th>
+  <th id="inHead">Input</th>
+  <th>Closing</th>
+</tr>
+</thead>
+<tbody></tbody>
+</table>
+
+<button id="submitBtn" onclick="save()">SUBMIT</button>
+
+<span id="msg"></span>
+
+<script>
+let cache=[];
+let invoiceNo="";
+
+// Load Sections
+google.script.run.withSuccessHandler(d=>{
+  d.forEach(s=>{
+    let o=document.createElement("option");
+    o.value=o.text=s;
+    section.appendChild(o);
+  });
+}).getSections();
+
+// Load Reps dependent on Section
+section.onchange = function(){
+  rep.innerHTML = '<option value="">Select Rep</option>';
+  if(!section.value) return;
+  if(mode.value!=="PURCHASE"){
+    google.script.run.withSuccessHandler(list=>{
+      list.forEach(r=>{
+        let o=document.createElement("option");
+        o.value=o.text=r;
+        rep.appendChild(o);
+      });
+    }).getRepsBySection(section.value);
+  }
+};
+
+// Load SKU Table
+function loadSKU(){
+
+  msg.innerHTML="";
+
+  if(!section.value || !mode.value || !rep.value){
+    msg.innerHTML="❌ Select Type, Section & Rep";
+    msg.className="err";
+    return;
+  }
+
+  // 🔎 CHECK PENDING RECEIVED
+  google.script.run.withSuccessHandler(pending=>{
+
+    if(pending.length > 0){
+
+      let text = "⚠ RECEIVED PENDING\n\n";
+      pending.forEach(p => text += "• " + p + "\n");
+
+      alert(text);   // Show warning popup
+    }
+
+    // 🟢 Continue loading table
+    loadTableActual();
+
+  }).checkReceivedPending(section.value);
+}
+
+// Calculation
+function calc(i,el){
+  let o=cache[i].opening;
+  let v=Number(el.value)||0;
+  let s,c;
+  if(mode.value==="SALES"){ s=v; c=o-s; if(c<0){el.value=0;c=o;} }
+  else if(mode.value==="CLOSING"){ c=v; if(c<0){el.value=o;c=o;} s=o-c; }
+  else if(mode.value==="PURCHASE"){ s=v; c=o+s; }
+  document.getElementById("c"+i).innerText=c;
+}
+
+// Save
+function save(){
+
+  const btn = document.getElementById("submitBtn");
+
+  // Prevent double click
+  if(btn.disabled) return;
+
+  btn.disabled = true;
+  btn.innerText = "Saving...";
+  msg.innerHTML="⏳ Submitting...";
+  msg.className="";
+
+  let arr=[];
+
+  [...tbl.querySelectorAll("tbody tr")].forEach((tr,i)=>{
+    let v=Number(tr.cells[2].querySelector("input").value)||0;
+
+    if(v!==0){
+      let o=Number(cache[i].opening)||0;
+      let s,c;
+
+      if(mode.value==="SALES"){ 
+        s=v; 
+        c=o-s; 
+      }
+      else if(mode.value==="CLOSING"){ 
+        c=v; 
+        s=o-c; 
+      }
+
+      arr.push({
+        section: section.value,
+        rep: rep.value,
+        sku: cache[i].sku,
+        opening: o,
+        sales: s,
+        closing: c
+      });
+    }
+  });
+
+  if(arr.length===0){
+    msg.innerHTML="❌ No data entered";
+    msg.className="err";
+    btn.disabled=false;
+    btn.innerText="SUBMIT";
+    return;
+  }
+
+  google.script.run
+    .withSuccessHandler(()=>{
+      msg.innerHTML="✔ Data Saved";
+      msg.className="ok";
+      tbl.querySelector("tbody").innerHTML="";
+      section.value="";
+      rep.value="";
+      mode.value="";
+      btn.disabled=false;
+      btn.innerText="SUBMIT";
+    })
+    .withFailureHandler(e=>{
+      msg.innerHTML="❌ Error: "+e.message;
+      msg.className="err";
+      btn.disabled=false;
+      btn.innerText="SUBMIT";
+    })
+    .saveFromWeb(arr, mode.value);
+}
+function loadTableActual(){
+
+  tbl.querySelector("tbody").innerHTML="";
+  inHead.innerText = mode.value==="SALES" ? "Sales" : "Closing";
+
+  google.script.run.withSuccessHandler(d=>{
+    cache=d;
+    d.forEach((r,i)=>{
+      let tr=document.createElement("tr");
+      tr.innerHTML=`
+        <td class="sticky">${r.sku}</td>
+        <td class="sticky2">${r.opening}</td>
+        <td><input type="number" oninput="calc(${i},this)"></td>
+        <td id="c${i}">${r.closing}</td>`;
+      tbl.querySelector("tbody").appendChild(tr);
+    });
+  }).getSKUData(section.value);
+}
+
+</script>
+<script>
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js")
+    .then(()=>console.log("SW Registered"))
+    .catch(err=>console.log(err));
+}
+</script>
+
+</body>
+</html>
