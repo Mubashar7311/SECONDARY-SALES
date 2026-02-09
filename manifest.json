@@ -1,7 +1,8 @@
 {
   "name": "Inventory Entry",
   "short_name": "Inventory",
-  "start_url": ".",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#f8f9fa",
   "theme_color": "#007bff",
